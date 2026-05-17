@@ -214,10 +214,6 @@ def dispatch_review_run(self, developer_run_id: str) -> None:
                     run_role=RunRole.fixer,
                     parent_run_id=dev_uuid,
                     follow_up_instruction=fix_instruction,
-<<<<<<< HEAD
-=======
-                    branch_name=dev_branch_name,
->>>>>>> b9edbb5 (fix: integrating reviewer agent to the worker and finishing the other)
                     model_id=dev_model_id,
                     prompt_version="v1",
                     max_turns=15,
