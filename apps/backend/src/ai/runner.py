@@ -148,7 +148,10 @@ def _detect_stack(workspace: str) -> str:
     if os.path.exists(os.path.join(workspace, "package.json")):
         parts.append("- Node.js project detected (package.json found). Run `npm test` or similar verification commands if applicable.")
     if os.path.exists(os.path.join(workspace, "pyproject.toml")) or os.path.exists(os.path.join(workspace, "setup.py")):
-        parts.append("- Python project detected. Suggest using `pytest` or `ruff check .` for verification.")
+        if os.path.exists(os.path.join(workspace, "uv.lock")):
+            parts.append("- Python project detected with uv.lock. Prefer `uv run pytest ...` for verification; if verification tooling is unavailable, note that in the PR body and continue if the change is otherwise valid.")
+        else:
+            parts.append("- Python project detected. Suggest using `python -m pytest ...` or `pytest ...` for verification; if verification tooling is unavailable, note that in the PR body and continue if the change is otherwise valid.")
     if os.path.exists(os.path.join(workspace, "go.mod")):
         parts.append("- Go project detected. Verification with `go test ./...` is recommended.")
     if os.path.exists(os.path.join(workspace, "Cargo.toml")):
