@@ -38,7 +38,6 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
       REDIS_URL: redis://valkey:6379/0
-      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
     env_file:
       - ./apps/backend/.env
     depends_on:

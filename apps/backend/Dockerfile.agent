@@ -25,8 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && ln -sf ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
- && corepack enable \
- && corepack prepare pnpm@10.33.3 --activate \
+ && npm install -g pnpm@10.33.3 \
  && node --version \
  && npm --version \
  && pnpm --version \
