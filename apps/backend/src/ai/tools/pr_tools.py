@@ -74,15 +74,20 @@ def _run_git(
     github_token: str | None = None,
 ) -> subprocess.CompletedProcess:
     with _git_auth_env(github_token) as env:
-        return subprocess.run(
+        result = subprocess.run(
             ["git"] + args,
             cwd=WORKSPACE,
             capture_output=True,
             text=True,
             timeout=60,
-            check=check,
+            check=False,
             env=env,
         )
+    if check and result.returncode != 0:
+        output = (result.stderr or result.stdout or "").strip()
+        command = "git " + " ".join(args)
+        raise RuntimeError(f"{command} failed with exit {result.returncode}: {output}")
+    return result
 
 
 def _parse_github_owner_repo(clone_url: str) -> tuple[str, str]:
@@ -95,14 +100,13 @@ def _parse_github_owner_repo(clone_url: str) -> tuple[str, str]:
 
 
 def _check_has_changes() -> None:
-    diff = _run_git(["diff", "--stat"], check=False)
-    staged = _run_git(["diff", "--cached", "--stat"], check=False)
-    log_ahead = _run_git(["log", "--oneline", "@{upstream}..HEAD"], check=False)
-    if (
-        not diff.stdout.strip()
-        and not staged.stdout.strip()
-        and not log_ahead.stdout.strip()
-    ):
+    status = _run_git(["status", "--porcelain"], check=False)
+    if status.returncode != 0:
+        raise RuntimeError(f"git status failed: {status.stderr or status.stdout}")
+    if status.stdout.strip():
+        return
+
+    if not _has_unpushed_commits():
         raise RuntimeError(
             "No changes detected in the workspace. Make edits before submitting a PR."
         )
@@ -112,17 +116,29 @@ def _check_worktree_has_changes() -> None:
     status = _run_git(["status", "--porcelain"], check=False)
     if status.returncode != 0:
         raise RuntimeError(f"git status failed: {status.stderr or status.stdout}")
-    if not status.stdout.strip():
+    if not status.stdout.strip() and not _has_unpushed_commits():
         raise RuntimeError(
             "No follow-up changes detected in the workspace. Make edits before submitting."
         )
+
+
+def _has_unpushed_commits() -> bool:
+    result = _run_git(["log", "--oneline", "--branches", "--not", "--remotes"], check=False)
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def _ensure_remote_branch_matches_head(branch: str, github_token: str) -> None:
     _run_git(["fetch", "origin", branch], github_token=github_token)
     local_head = _run_git(["rev-parse", "HEAD"]).stdout.strip()
     remote_head = _run_git(["rev-parse", "FETCH_HEAD"]).stdout.strip()
-    if local_head != remote_head:
+    if local_head == remote_head:
+        return
+
+    includes_remote = _run_git(
+        ["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"],
+        check=False,
+    )
+    if includes_remote.returncode != 0:
         raise RuntimeError(
             "The pull request branch changed while this follow-up was running. "
             "Please start a new follow-up from the latest PR branch."

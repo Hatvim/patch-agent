@@ -86,11 +86,25 @@ os.environ[f"{_provider_prefix}_API_KEY"] = settings.llm_api_key
 WORKSPACE = "/workspace"
 FINALIZATION_PROMPT = """\
 You stopped after making repository changes but before finalizing the run.
+The host already detected pending repository work. That can be either workspace
+changes from `git status --porcelain` or a local commit that was created before
+a previous push failed. New untracked files appear in status as `??` and may not
+show up in `git diff` until staged.
 
 You MUST make exactly one of these final tool-call paths now:
-1. Call exec_command("git --no-pager diff") to review the changes,
-   then call submit_pull_request(title, body).
-2. If the current changes are invalid or the task cannot be completed, call mark_blocked(reason).
+1. Call exec_command("git status --porcelain") to list all changed files.
+2. If status is not empty, optionally call exec_command("git --no-pager diff --stat")
+   or exec_command("git --no-pager diff") to review tracked-file changes. If diff
+   output is empty but status contains `??`, that means the change is a new
+   untracked file; it is NOT a no-op.
+3. If status is empty after a previous submit attempt failed, still call
+   submit_pull_request(title, body). The change may already be committed locally
+   and only need another push/upsert attempt.
+4. Call submit_pull_request(title, body). If verification could not run because
+   a command such as pytest was unavailable, mention that in the PR body.
+5. Only call mark_blocked(reason) if git status is clean, there is no previous
+   failed submit attempt to retry, and the current changes are known to be
+   invalid/unsafe.
 
 Do not answer in prose. Do not stop without calling submit_pull_request or mark_blocked.
 """
@@ -161,8 +175,8 @@ and the task fails.
    - search:   rg 'pattern' -n           rg --type py 'def foo'        find . -name '*.ts'
    - structural: ast-grep run -p 'function $A() { $$$ }' -l ts
    - read:     cat path/to/file          head -n 50 file               sed -n '120,180p' file
-   - test/lint: pytest -x                ruff check .                  npm test    tsc --noEmit
-   - git:      git status                git --no-pager diff           git log --oneline -10
+   - test/lint: uv run pytest -q         python -m pytest              ruff check .     npm test
+   - git:      git status --porcelain    git --no-pager diff           git log --oneline -10
    - inspect:  ls -la                    tree -L 2                     which python
    The cwd MUST be `/workspace` or a real subdirectory under `/workspace`.
    Never put a question, explanation, plan, or user-facing sentence in `command` or `cwd`.
@@ -187,7 +201,7 @@ and the task fails.
 
 10. submit_pull_request(title, body)
    FINAL step. Stages, commits, pushes a new branch, opens (or updates) the PR.
-   Call this exactly once after you have made edits and reviewed `git --no-pager diff`.
+   Call this exactly once after you have made edits and checked `git status --porcelain`.
 
 11. mark_blocked(reason)
    FINAL failure step. Use this when the request is ambiguous, impossible, unsafe,
@@ -207,7 +221,10 @@ For every task, no exceptions:
        - NEW file or full rewrite: write_file(path, content)
        - surgical edit to existing file: patch_file(path, diff)
   8. Verify ONLY if it matches the repo. See "Verification rules" below.
-  9. Review diff: exec_command("git --no-pager diff") to review the changes before PR submission.
+  9. Review status: exec_command("git status --porcelain") before PR submission.
+     Then optionally call exec_command("git --no-pager diff --stat") or
+     exec_command("git --no-pager diff"). Remember: untracked new files appear
+     in status as `??` and may not appear in diff until staged.
   10. submit_pull_request(title, body) — STOP HERE. Do not call any more tools after this.
 
 Inspection budget: after at most 6 exec_command calls, you must either edit with
@@ -217,7 +234,10 @@ you know where to make the change.
 # Verification rules (very important — do NOT run irrelevant tests)
 
 Only run a verification command if the repo clearly supports it:
-  - `pytest` ONLY if there's a `pyproject.toml` / `setup.py` / `tests/` dir AND a python project.
+  - Python tests ONLY if there's a `pyproject.toml` / `setup.py` / `tests/` dir
+    AND a python project. If `uv.lock` exists, prefer `uv run pytest ...`.
+    If bare `pytest` is unavailable, try `python -m pytest ...` or skip
+    verification and mention it in the PR body.
   - `npm test` / `npm run build` ONLY if there's a `package.json` with a matching script.
   - `cargo test` ONLY if there's a `Cargo.toml`.
   - `go test ./...` ONLY if there's a `go.mod`.
@@ -227,6 +247,11 @@ Only run a verification command if the repo clearly supports it:
 
 If `ls -la` only shows static files (index.html, css/, etc.) and no package manager
 config, the right verification is: read back the file you wrote. Then submit.
+
+If a verification command is missing (`command not found`, module not installed,
+or equivalent) after you have made valid repository changes, do NOT call
+mark_blocked solely for that. Check `git status --porcelain`, then submit the PR
+with a note that verification could not be run.
 
 # After submit_pull_request
 
@@ -336,7 +361,68 @@ def _workspace_has_changes(workspace_path: str) -> bool:
         )
     except Exception:
         return False
+    if result.returncode == 0 and result.stdout.strip():
+        return True
+
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "--branches", "--not", "--remotes"],
+            cwd=workspace_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            env=_git_probe_env(),
+        )
+    except Exception:
+        return False
     return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _is_recoverable_block_after_edit(reason: str) -> bool:
+    """Return true for common false blockers after a valid edit exists."""
+    normalized = reason.lower()
+    missing_verifier = any(
+        phrase in normalized
+        for phrase in (
+            "command not found",
+            "not available",
+            "not installed",
+            "no module named",
+        )
+    ) and any(
+        tool in normalized
+        for tool in (
+            "pytest",
+            "ruff",
+            "mypy",
+            "tsc",
+            "npm",
+            "pnpm",
+            "yarn",
+            "cargo",
+            "go test",
+        )
+    )
+    empty_diff_confusion = (
+        "git" in normalized
+        and ("diff" in normalized or "status" in normalized)
+        and any(
+            phrase in normalized
+            for phrase in (
+                "already satisfies",
+                "already satisfied",
+                "no changes",
+                "no change",
+                "empty",
+                "clean",
+                "no further modifications",
+                "returns no",
+                "returned no",
+            )
+        )
+    )
+    return missing_verifier or empty_diff_confusion
 
 
 def _next_recovery_prompt(done_flag: dict, workspace_path: str) -> str:
@@ -388,6 +474,7 @@ def _build_agent(
     emitter: RunEmitter | None = None,
     agent_run_id: str = "",
     repository_id: str = "",
+    workspace_path: str = WORKSPACE,
 ) -> Agent:
     model_kwargs: dict = {
         "id": settings.llm_model_id,
@@ -544,12 +631,18 @@ def _build_agent(
     @tool(name="submit_pull_request", stop_after_tool_call=True)
     def tool_submit_pull_request(title: str, body: str) -> dict:
         """FINAL step. Commit, push, open (or update) the Pull Request. The agent MUST stop after this returns ok=true."""
-        result = _instrumented(
-            emitter,
-            "submit_pull_request",
-            submit_pull_request,
-            {"title": title, "body": body},
-        )
+        try:
+            result = _instrumented(
+                emitter,
+                "submit_pull_request",
+                submit_pull_request,
+                {"title": title, "body": body},
+            )
+        except Exception as exc:
+            if done_flag is not None:
+                done_flag["submit_failed"] = True
+                done_flag["submit_error"] = str(exc)
+            raise
         is_done = (
             isinstance(result, dict)
             and result.get("error") is None
@@ -567,6 +660,27 @@ def _build_agent(
     @tool(name="mark_blocked", stop_after_tool_call=True)
     def tool_mark_blocked(reason: str) -> dict:
         """FINAL failure step. Use when the request is ambiguous, impossible, unsafe, or blocked. Do not submit a PR."""
+        if (
+            done_flag is not None
+            and done_flag.get("edit_succeeded")
+            and _workspace_has_changes(workspace_path)
+            and _is_recoverable_block_after_edit(reason)
+        ):
+            done_flag["blocked_retry_reason"] = reason
+            return _instrumented(
+                emitter,
+                "mark_blocked",
+                lambda reason: {
+                    "status": "needs_finalization",
+                    "reason": reason,
+                    "next_step": (
+                        "Workspace changes exist. Missing verification commands or an empty "
+                        "git diff for untracked files are not blockers. Check git status and "
+                        "submit the pull request with a verification note."
+                    ),
+                },
+                {"reason": reason},
+            )
         result = _instrumented(
             emitter,
             "mark_blocked",
@@ -630,6 +744,7 @@ async def run_agent(
         emitter=emitter,
         agent_run_id=agent_run_id,
         repository_id=repository_id,
+        workspace_path=workspace_path,
     )
 
     with tracer.start_as_current_span(f"run_{agent_run_id}") as span:

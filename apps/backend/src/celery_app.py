@@ -6,9 +6,11 @@ celery_app = Celery(
     "patch",
     broker=settings.redis_url,
     backend=settings.redis_url,
+    include=[
+        "src.services.agent_runner",
+        "src.services.review_runner",
+    ],
 )
-
-celery_app.autodiscover_tasks(["src.services.agent_runner"])
 
 celery_app.conf.update(
     task_serializer="json",

@@ -7,6 +7,7 @@ from src.ai.agent import (
     FINALIZATION_PROMPT,
     IMPLEMENTATION_RECOVERY_PROMPT,
     NO_CHANGE_AFTER_EDIT_PROMPT,
+    _is_recoverable_block_after_edit,
     _next_recovery_prompt,
     run_agent,
 )
@@ -172,4 +173,14 @@ def test_recovery_prompt_finalizes_after_successful_edit_with_changes(monkeypatc
     prompt = _next_recovery_prompt({"edit_succeeded": True}, "/workspace")
 
     assert prompt == FINALIZATION_PROMPT
-    assert 'exec_command("git --no-pager diff")' in prompt
+    assert 'exec_command("git status --porcelain")' in prompt
+    assert "untracked file" in prompt
+
+
+def test_recoverable_blocker_detects_missing_verifier_and_empty_diff_confusion():
+    assert _is_recoverable_block_after_edit("pytest: command not found")
+    assert _is_recoverable_block_after_edit("git --no-pager diff returns no changes")
+    assert _is_recoverable_block_after_edit(
+        "The repository already satisfies the requested change and git status is clean."
+    )
+    assert not _is_recoverable_block_after_edit("The request is ambiguous.")
