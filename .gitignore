@@ -14,6 +14,10 @@
 .serena
 .dev
 
+# Markdown files, except the repository README
+*.md
+!README.md
+
 __pycache__
 
 .data/

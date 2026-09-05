@@ -97,12 +97,12 @@ def get_pull_request_for_run_for_user(
 
     return get_pull_request_for_run(session, run_id)
 
+
 def get_repository_for_pull_request_for_user(
     session: Session, pr: PullRequest, user_id: uuid.UUID
 ) -> Repository | None:
-    statement = (
-        select(Repository)
-        .where(Repository.id == pr.repository_id, Repository.user_id == user_id)
+    statement = select(Repository).where(
+        Repository.id == pr.repository_id, Repository.user_id == user_id
     )
     return session.exec(statement).first()
 
@@ -165,9 +165,7 @@ def list_events(
     return list(session.exec(statement).all())
 
 
-def get_pull_request_for_run(
-    session: Session, run_id: uuid.UUID
-) -> PullRequest | None:
+def get_pull_request_for_run(session: Session, run_id: uuid.UUID) -> PullRequest | None:
     seen_run_ids: set[uuid.UUID] = set()
     current_run_id = run_id
     max_depth = 50
@@ -224,7 +222,11 @@ def resolve_follow_up_target(
     branch_name = parent_run.branch_name or pr.head_branch
     if not branch_name:
         return None
-    if parent_run.branch_name and pr.head_branch and parent_run.branch_name != pr.head_branch:
+    if (
+        parent_run.branch_name
+        and pr.head_branch
+        and parent_run.branch_name != pr.head_branch
+    ):
         return None
 
     return branch_name, pr

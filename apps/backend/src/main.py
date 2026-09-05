@@ -3,13 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from scalar_fastapi import get_scalar_api_reference
 
 from src.core.config import settings
+from src.routes.agent_runs import agent_runs_router
 from src.routes.auth import auth_router, me_router
+from src.routes.dashboard import dashboard_router
+from src.routes.feedback import feedback_router
 from src.routes.github import github_router
 from src.routes.repositories import router as repositories_router
 from src.routes.tasks import tasks_router
-from src.routes.agent_runs import agent_runs_router
-from src.routes.feedback import feedback_router
-from src.routes.dashboard import dashboard_router
 from src.routes.ws import ws_router
 
 app = FastAPI(
