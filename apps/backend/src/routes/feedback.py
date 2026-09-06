@@ -96,6 +96,13 @@ def submit_feedback(
             detail="Failed to create feedback run",
         ) from exc
 
-    enqueue_agent_run(new_run.id)
+    try:
+        enqueue_agent_run(new_run.id)
+    except Exception as exc:
+        logger.exception("Celery enqueue failed for run %s: %s", new_run.id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Queue unavailable, try again later.",
+        ) from exc
 
     return AgentRunRead.model_validate(new_run)

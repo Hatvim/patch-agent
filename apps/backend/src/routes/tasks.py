@@ -130,7 +130,14 @@ async def create_task(
             detail="An unexpected error occurred. Please try again.",
         ) from exc
 
-    enqueue_agent_run(agent_run.id)
+    try:
+        enqueue_agent_run(agent_run.id)
+    except Exception as exc:
+        logger.exception("Celery enqueue failed for run %s: %s", agent_run.id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Queue unavailable, try again later.",
+        ) from exc
 
     return AgentRunRead.model_validate(agent_run)
 

@@ -22,9 +22,11 @@ def enqueue_agent_run(agent_run_id: uuid.UUID) -> None:
             "[CELERY STUB] dispatch_agent_run not found — Stream 3 not yet integrated. Agent run %s is queued but will not be dispatched until Stream 3 lands.",
             agent_run_id,
         )
+        raise
     except Exception as exc:
         logger.warning(
             "[CELERY STUB] Failed to enqueue dispatch_agent_run for agent run %s: %s. The run is stored in the DB and can be retried.",
             agent_run_id,
             exc,
         )
+        raise

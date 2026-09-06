@@ -149,6 +149,15 @@ def dispatch_review_run(self, developer_run_id: str) -> None:
         # --- Create reviewer AgentRun ---
         reviewer_model = settings.llm_reviewer_model_id or settings.llm_model_id
         with Session(engine) as session:
+            dev_row = session.get(AgentRun, dev_uuid)
+            if dev_row is None:
+                return
+            if dev_row.reviewer_run_id is not None:
+                logger.info(
+                    "Review already scheduled for %s — skipping duplicate.",
+                    developer_run_id,
+                )
+                return
             reviewer_run = AgentRun(
                 task_id=task_id,
                 status=RunStatus.queued,
@@ -162,14 +171,9 @@ def dispatch_review_run(self, developer_run_id: str) -> None:
             session.commit()
             session.refresh(reviewer_run)
             reviewer_run_id = reviewer_run.id
-
-        # Link reviewer_run_id back onto the developer run
-        with Session(engine) as session:
-            dev_row = session.get(AgentRun, dev_uuid)
-            if dev_row:
-                dev_row.reviewer_run_id = reviewer_run_id
-                session.add(dev_row)
-                session.commit()
+            dev_row.reviewer_run_id = reviewer_run_id
+            session.add(dev_row)
+            session.commit()
 
         # --- Set reviewer run to running ---
         with Session(engine) as session:
@@ -207,7 +211,21 @@ def dispatch_review_run(self, developer_run_id: str) -> None:
                 developer_run_id, len(actionable),
             )
             fix_instruction = _format_fix_instruction(actionable, pr_number)
+            fix_run_id: uuid.UUID | None = None
             with Session(engine) as session:
+                existing_fixer = session.exec(
+                    select(AgentRun).where(
+                        AgentRun.parent_run_id == dev_uuid,
+                        AgentRun.run_role == RunRole.fixer,
+                        AgentRun.status.in_([RunStatus.queued, RunStatus.running]),  # type: ignore[attr-defined]
+                    )
+                ).first()
+                if existing_fixer is not None:
+                    logger.info(
+                        "Fixer already scheduled for %s — skipping duplicate.",
+                        developer_run_id,
+                    )
+                    return
                 fix_run = AgentRun(
                     task_id=task_id,
                     status=RunStatus.queued,

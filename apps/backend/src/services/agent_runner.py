@@ -249,6 +249,7 @@ def dispatch_agent_run(self, agent_run_id: str) -> None:
                     run_row
                     and run_row.status == RunStatus.succeeded
                     and run_row.run_role == RunRole.developer
+                    and run_row.reviewer_run_id is None
                 ):
                     enqueue_review_run(run_uuid)
 
