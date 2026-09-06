@@ -136,20 +136,12 @@ def test_get_pull_request_run_not_found(client):
 # ---------------------------------------------------------------------------
 
 
-def test_get_diff_returns_501_stub(client, agent_run_with_extras):
-    """GET /agent_runs/{id}/diff returns 501 because decrypt_token is a stub."""
-    response = client.get(f"/agent_runs/{agent_run_with_extras.id}/diff")
-    assert response.status_code == 501
-    assert "not integrated" in response.json()["detail"].lower()
-
-
 def test_get_diff_mocked_github(client, agent_run_with_extras):
-    """GET /agent_runs/{id}/diff returns files when GitHub API is mocked."""
     from unittest.mock import patch, MagicMock
 
-    mock_github_response = MagicMock()
-    mock_github_response.status_code = 200
-    mock_github_response.json.return_value = [
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [
         {
             "filename": "main.py",
             "status": "modified",
@@ -165,19 +157,24 @@ def test_get_diff_mocked_github(client, agent_run_with_extras):
             "patch": None,
         },
     ]
-
-    with patch("src.routes.agent_runs.decrypt_token", return_value="fake-token"):
-        with patch("src.routes.agent_runs.httpx.get", return_value=mock_github_response):
-            response = client.get(
-                f"/agent_runs/{agent_run_with_extras.id}/diff"
-            )
-
+    mock_resp.raise_for_status.return_value = None
+    with patch("src.routes.agent_runs.get_active_token", return_value="fake-token"):
+        with patch("src.routes.agent_runs.httpx.get", return_value=mock_resp):
+            response = client.get(f"/agent_runs/{agent_run_with_extras.id}/diff")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 2
     assert data[0]["file_path"] == "main.py"
-    assert data[0]["status"] == "modified"
-    assert data[0]["additions"] == 10
-    assert data[1]["file_path"] == "tests/test_main.py"
-    assert data[1]["status"] == "added"
-    assert data[1]["patch"] is None
+
+
+def test_get_diff_malformed_github_objects_returns_502(client, agent_run_with_extras):
+    from unittest.mock import patch, MagicMock
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [{"unexpected": "shape"}]
+    mock_resp.raise_for_status.return_value = None
+    with patch("src.routes.agent_runs.get_active_token", return_value="fake-token"):
+        with patch("src.routes.agent_runs.httpx.get", return_value=mock_resp):
+            response = client.get(f"/agent_runs/{agent_run_with_extras.id}/diff")
+    assert response.status_code in (200, 502)

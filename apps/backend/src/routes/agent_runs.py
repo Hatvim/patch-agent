@@ -140,17 +140,26 @@ def get_agent_run_diff(
             raise HTTPException(status_code=404, detail="GitHub PR not found")
         response.raise_for_status()
         files = response.json()
-
-        return [
-            DiffFileRead(
-                file_path=f["filename"],
-                status=f["status"],
-                additions=f["additions"],
-                deletions=f["deletions"],
-                patch=f.get("patch"),
-            )
-            for f in files
-        ]
+        if not isinstance(files, list):
+            raise HTTPException(status_code=502, detail="GitHub API error")
+        out: list[DiffFileRead] = []
+        for f in files:
+            if not isinstance(f, dict):
+                continue
+            try:
+                out.append(
+                    DiffFileRead(
+                        file_path=str(f["filename"]),
+                        status=str(f["status"]),
+                        additions=int(f["additions"]),
+                        deletions=int(f["deletions"]),
+                        patch=f.get("patch"),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Skipping malformed GitHub file object: %r", f)
+                continue
+        return out
     except httpx.HTTPError as e:
         logger.error(f"GitHub API error: {e}")
         raise HTTPException(status_code=502, detail="GitHub API error")
