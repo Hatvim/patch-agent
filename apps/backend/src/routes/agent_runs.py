@@ -5,8 +5,10 @@ import docker
 import httpx
 from celery.exceptions import CeleryError
 from docker.errors import DockerException, NotFound
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
 from src.celery_app import celery_app
@@ -46,6 +48,8 @@ TERMINAL_STATUSES = {RunStatus.succeeded, RunStatus.failed, RunStatus.cancelled}
 logger = logging.getLogger(__name__)
 
 agent_runs_router = APIRouter(prefix="/agent_runs", tags=["Agent Runs"])
+
+limiter = Limiter(key_func=get_remote_address)
 
 
 @agent_runs_router.get("/", response_model=list[AgentRunListItemRead])
@@ -109,7 +113,9 @@ def get_pull_request(
 
 
 @agent_runs_router.get("/{id}/diff", response_model=list[DiffFileRead])
+@limiter.limit("30/minute")
 def get_agent_run_diff(
+    request: Request,
     id: uuid.UUID,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),

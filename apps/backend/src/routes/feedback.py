@@ -2,7 +2,9 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlmodel import Session
 
 from src.core.auth import current_user
@@ -19,13 +21,17 @@ logger = logging.getLogger(__name__)
 
 feedback_router = APIRouter(prefix="/agent_runs", tags=["Feedback"])
 
+limiter = Limiter(key_func=get_remote_address)
+
 
 @feedback_router.post(
     "/{id}/feedback",
     response_model=AgentRunRead,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("30/minute")
 def submit_feedback(
+    request: Request,
     id: uuid.UUID,
     body: FeedbackCreate,
     session: Session = Depends(get_session),

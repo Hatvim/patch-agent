@@ -20,6 +20,7 @@ class User(SQLModel, table=True):
     name: str | None = Field(default=None, max_length=255)
     hashed_password: str = Field(max_length=1024)
     daily_run_quota: int = Field(default=15, nullable=False)
+    session_version: int = Field(default=0, nullable=False)
 
     created_at: datetime = Field(
         sa_column=Column(

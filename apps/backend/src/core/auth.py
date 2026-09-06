@@ -9,7 +9,7 @@ from sqlmodel import Session
 
 from src.core.config import settings
 from src.core.database import engine, get_session
-from src.core.security import decode_session_token
+from src.core.security import decode_session_token, decode_session_token_payload
 from src.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ def _resolve_user(session: Session, token: str | None) -> User:
             headers={"WWW-Authenticate": "Cookie"},
         )
     try:
+        payload = decode_session_token_payload(token)
         user_id = decode_session_token(token)
     except (jwt.PyJWTError, ValueError) as exc:
         logger.debug("Rejected session token: %s", exc)
@@ -31,6 +32,8 @@ def _resolve_user(session: Session, token: str | None) -> User:
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if payload.get("ver", 0) != user.session_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
     return user
 
 

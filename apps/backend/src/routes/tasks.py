@@ -1,12 +1,16 @@
 import logging
 import uuid
+from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlmodel import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from sqlmodel import Session, select
 
 from src.core.auth import current_user
 from src.core.database import get_session
 from src.models.enums import RunStatus
+from src.models.usage_record import UsageRecord
 from src.models.user import User
 from src.repositories import agent_runs as agent_run_repo
 from src.repositories import tasks as task_repo
@@ -18,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 tasks_router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
+limiter = Limiter(key_func=get_remote_address)
+
 
 @tasks_router.post(
     "/",
@@ -25,7 +31,9 @@ tasks_router = APIRouter(prefix="/tasks", tags=["Tasks"])
     status_code=status.HTTP_201_CREATED,
     summary="Create a task and queue an agent run",
 )
+@limiter.limit("30/minute")
 async def create_task(
+    request: Request,
     body: TaskCreate,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
@@ -53,6 +61,19 @@ async def create_task(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Repository not found or does not belong to you.",
+        )
+
+    today = date.today()
+    usage = session.exec(
+        select(UsageRecord).where(
+            UsageRecord.user_id == user.id,
+            UsageRecord.date == today,
+        )
+    ).first()
+    if usage is not None and usage.run_count >= user.daily_run_quota:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily run quota exceeded",
         )
 
     parent_run = None
@@ -138,6 +159,13 @@ async def create_task(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Queue unavailable, try again later.",
         ) from exc
+
+    if usage is None:
+        session.add(UsageRecord(user_id=user.id, date=today, run_count=1))
+    else:
+        usage.run_count += 1
+        session.add(usage)
+    session.commit()
 
     return AgentRunRead.model_validate(agent_run)
 

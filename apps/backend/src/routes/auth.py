@@ -7,9 +7,12 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import httpx
+import redis
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
 from src.core.auth import current_user
@@ -21,6 +24,8 @@ from src.models.user import User
 from src.schemas.user import UserRead
 
 logger = logging.getLogger(__name__)
+
+limiter = Limiter(key_func=get_remote_address)
 
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 me_router = APIRouter(prefix="/me", tags=["Me"])
@@ -60,7 +65,14 @@ def _clear_session_cookie(response: Response) -> None:
 
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(response: Response) -> Response:
+def logout(
+    response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> Response:
+    user.session_version += 1
+    session.add(user)
+    session.commit()
     _clear_session_cookie(response)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -75,7 +87,58 @@ def get_me(user: User = Depends(current_user)) -> UserRead:
 # ---------------------------------------------------------------------------
 
 
+def _oauth_redis_client() -> redis.Redis | None:
+    if not settings.redis_url:
+        return None
+    try:
+        return redis.Redis.from_url(settings.redis_url, socket_timeout=2)
+    except Exception as exc:
+        logger.warning("OAuth state Redis unavailable: %s", exc)
+        return None
+
+
+def _store_oauth_state(state: str) -> None:
+    client = _oauth_redis_client()
+    if client is None:
+        return
+    try:
+        client.set(f"oauth_state:{state}", "1", ex=600, nx=True)
+    except Exception as exc:
+        logger.warning("OAuth state store failed, continuing cookie-only: %s", exc)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _consume_oauth_state(state: str) -> bool | None:
+    """Consume a one-time OAuth state. True=consumed, False=replayed/missing,
+    None=Redis unreachable (caller falls back to cookie check)."""
+    client = _oauth_redis_client()
+    if client is None:
+        return None
+    try:
+        try:
+            deleted = client.getdel(f"oauth_state:{state}")
+        except AttributeError:
+            # redis-py without GETDEL: GET then DEL (best-effort one-time use).
+            deleted = client.get(f"oauth_state:{state}")
+            if deleted is not None:
+                client.delete(f"oauth_state:{state}")
+        return deleted is not None
+    except Exception as exc:
+        logger.warning("OAuth state lookup failed, falling back to cookie: %s", exc)
+        return None
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
 @auth_router.get("/github/start")
+@limiter.limit("30/minute")
 def github_start(request: Request) -> RedirectResponse:
     if not settings.github_oauth_client_id or not settings.github_oauth_client_secret:
         raise HTTPException(
@@ -84,6 +147,7 @@ def github_start(request: Request) -> RedirectResponse:
         )
 
     state = secrets.token_urlsafe(32)
+    _store_oauth_state(state)
     params = {
         "client_id": settings.github_oauth_client_id,
         "redirect_uri": settings.github_oauth_redirect_uri,
@@ -124,6 +188,10 @@ async def github_callback(
 
     expected_state = request.cookies.get(_OAUTH_STATE_COOKIE)
     if not expected_state or not secrets.compare_digest(expected_state, state):
+        return _login_error_redirect("invalid_state")
+
+    redis_verdict = _consume_oauth_state(state)
+    if redis_verdict is False:
         return _login_error_redirect("invalid_state")
 
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -204,7 +272,7 @@ async def github_callback(
     session.commit()
 
     response = RedirectResponse(f"{settings.frontend_url}/", status_code=302)
-    _set_session_cookie(response, create_session_token(user.id))
+    _set_session_cookie(response, create_session_token(user.id, user.session_version))
     response.delete_cookie(_OAUTH_STATE_COOKIE, path="/auth/github")
     return response
 

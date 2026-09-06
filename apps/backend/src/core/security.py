@@ -28,20 +28,25 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_session_token(user_id: uuid.UUID) -> str:
+def create_session_token(user_id: uuid.UUID, session_version: int = 0) -> str:
     if not settings.jwt_secret:
         raise RuntimeError("JWT_SECRET is not configured")
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
+        "ver": session_version,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(hours=settings.session_ttl_hours)).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=_JWT_ALG)
 
 
+def decode_session_token_payload(token: str) -> dict:
+    return jwt.decode(token, settings.jwt_secret, algorithms=[_JWT_ALG])
+
+
 def decode_session_token(token: str) -> uuid.UUID:
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=[_JWT_ALG])
+    payload = decode_session_token_payload(token)
     return uuid.UUID(payload["sub"])
 
 
