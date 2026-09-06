@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 import jwt
 from fastapi import Depends, HTTPException, Request, WebSocket, status
@@ -9,7 +10,7 @@ from sqlmodel import Session
 
 from src.core.config import settings
 from src.core.database import engine, get_session
-from src.core.security import decode_session_token, decode_session_token_payload
+from src.core.security import decode_session_token_payload
 from src.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,8 @@ def _resolve_user(session: Session, token: str | None) -> User:
         )
     try:
         payload = decode_session_token_payload(token)
-        user_id = decode_session_token(token)
-    except (jwt.PyJWTError, ValueError) as exc:
+        user_id = uuid.UUID(payload["sub"])
+    except (jwt.PyJWTError, ValueError, KeyError) as exc:
         logger.debug("Rejected session token: %s", exc)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
 

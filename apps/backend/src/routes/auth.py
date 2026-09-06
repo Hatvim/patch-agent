@@ -66,15 +66,15 @@ def _clear_session_cookie(response: Response) -> None:
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
-    response: Response,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ) -> Response:
     user.session_version += 1
     session.add(user)
     session.commit()
-    _clear_session_cookie(response)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _clear_session_cookie(resp)
+    return resp
 
 
 @me_router.get("", response_model=UserRead)

@@ -25,6 +25,9 @@ def test_logout_bumps_session_version(client, session, test_user):
     assert resp.status_code == 204
     session.refresh(test_user)
     assert test_user.session_version == 1
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "patch_session" in set_cookie
+    assert "Max-Age=0" in set_cookie
 
 
 def test_stale_session_version_rejected(session, test_user):
