@@ -95,6 +95,9 @@ def _build_env(ctx: _RunContext) -> dict[str, str]:
         "INSTRUCTION": ctx.instruction,
         "REPO_CLONE_URL": ctx.clone_url,
         "BASE_BRANCH": ctx.base_branch,
+        # GITHUB_TOKEN stays: the agent must push PRs from inside the container.
+        # Backlog: broker GitHub writes via short-lived installation tokens
+        # instead of user PATs to shrink the blast radius of a leaked token.
         "GITHUB_TOKEN": ctx.github_token,
         "REPOSITORY_ID": ctx.repository_id,
         "DATABASE_URL": settings.agent_database_url or _for_container(settings.database_url),

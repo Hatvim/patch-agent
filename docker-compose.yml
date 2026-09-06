@@ -3,7 +3,7 @@ services:
     image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-production}
       POSTGRES_DB: postgres
     ports:
       - "5433:5432"
@@ -19,12 +19,15 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
+    command: valkey-server --requirepass ${VALKEY_PASSWORD:-change-me-in-production}
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-change-me-in-production}
     ports:
       - "6379:6379"
     volumes:
       - ./.data/valkey:/data
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: ["CMD-SHELL", "valkey-cli -a \"$${VALKEY_PASSWORD:-change-me-in-production}\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,8 +39,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
-      REDIS_URL: redis://valkey:6379/0
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-change-me-in-production}@postgres:5432/postgres
+      REDIS_URL: redis://:${VALKEY_PASSWORD:-change-me-in-production}@valkey:6379/0
     env_file:
       - ./apps/backend/.env
     depends_on:
@@ -54,11 +57,12 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
-      REDIS_URL: redis://valkey:6379/0
-      AGENT_DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5433/postgres
-      AGENT_REDIS_URL: redis://host.docker.internal:6379/0
-      AGENT_ALLOW_HOST_GATEWAY: "true"
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-change-me-in-production}@postgres:5432/postgres
+      REDIS_URL: redis://:${VALKEY_PASSWORD:-change-me-in-production}@valkey:6379/0
+      AGENT_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-change-me-in-production}@host.docker.internal:5433/postgres
+      AGENT_REDIS_URL: redis://:${VALKEY_PASSWORD:-change-me-in-production}@host.docker.internal:6379/0
+      # Keep false in production; true only for local dev where agents need host DB/Redis.
+      AGENT_ALLOW_HOST_GATEWAY: "false"
     env_file:
       - ./apps/backend/.env
     depends_on:

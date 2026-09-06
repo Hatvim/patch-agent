@@ -19,3 +19,14 @@ def test_host_gateway_is_opt_in(monkeypatch):
     assert get_sandbox_options("run-123")["extra_hosts"] == {
         "host.docker.internal": "host-gateway"
     }
+
+
+def test_sandbox_disables_host_gateway_by_default(settings=None):
+    from src.services import sandboxing
+
+    opts = sandboxing.get_sandbox_options("00000000-0000-0000-0000-000000000000")
+    assert opts.get("extra_hosts") is None or "host.docker.internal" not in str(
+        opts.get("extra_hosts")
+    )
+    assert opts["read_only"] is True
+    assert "ALL" in opts["cap_drop"]
