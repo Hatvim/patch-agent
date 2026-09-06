@@ -96,3 +96,108 @@ def test_cancelled_run_not_overwritten_on_host_error():
             dispatch_agent_run(run_id)
 
     assert cancelled_row.status == RunStatus.cancelled
+
+
+def _make_dev_row(**overrides):
+    from unittest.mock import MagicMock
+
+    dev_row = MagicMock()
+    dev_row.task.id = uuid.uuid4()
+    dev_row.task.user_id = uuid.uuid4()
+    dev_row.model_id = "test-model"
+    dev_row.pull_request = MagicMock()
+    dev_row.reviewer_run_id = None
+    for key, value in overrides.items():
+        setattr(dev_row, key, value)
+    return dev_row
+
+
+def _make_exec_result(first_value):
+    from unittest.mock import MagicMock
+
+    result = MagicMock()
+    result.first.return_value = first_value
+    return result
+
+
+def test_second_review_dispatch_creates_no_new_reviewer():
+    from unittest.mock import MagicMock
+
+    from src.services.review_runner import dispatch_review_run
+
+    dev_uuid = uuid.uuid4()
+    dev_row = _make_dev_row(reviewer_run_id=uuid.uuid4())
+    mock_session = _make_mock_session(dev_row)
+    mock_session.exec.return_value = _make_exec_result(MagicMock())
+
+    with (
+        patch("src.services.review_runner.Session", return_value=mock_session),
+        patch("src.services.review_runner.decrypt_token", return_value="fake-token"),
+        patch("src.services.review_runner.publish_status_change"),
+        patch("src.services.review_runner._fetch_pr_diff", return_value="diff"),
+        patch("src.services.review_runner._emit_review_finding"),
+        patch("src.services.review_runner.run_review") as mock_run_review,
+        patch("src.services.agent_dispatch.enqueue_agent_run") as mock_enqueue,
+    ):
+        dispatch_review_run(str(dev_uuid))
+
+    mock_session.add.assert_not_called()
+    mock_run_review.assert_not_called()
+    mock_enqueue.assert_not_called()
+
+
+def test_second_fixer_dispatch_creates_no_new_fixer():
+    from unittest.mock import MagicMock
+
+    from src.models.agent_run import AgentRun
+    from src.models.enums import RunRole, RunStatus
+    from src.services.review_runner import dispatch_review_run
+
+    dev_uuid = uuid.uuid4()
+    dev_row = _make_dev_row()
+    reviewer_row = MagicMock()
+    reviewer_row.status = RunStatus.queued
+
+    def _get(model, run_id):
+        if run_id == dev_uuid:
+            return dev_row
+        return reviewer_row
+
+    existing_fixer = MagicMock()
+    existing_fixer.status = RunStatus.queued
+    existing_fixer.run_role = RunRole.fixer
+
+    mock_session = _make_mock_session(dev_row)
+    mock_session.get.side_effect = _get
+    mock_session.exec.side_effect = [
+        _make_exec_result(MagicMock()),
+        _make_exec_result(existing_fixer),
+    ]
+
+    finding = {
+        "file_path": "main.py",
+        "severity": "critical",
+        "category": "correctness",
+        "issue": "Breaks on empty input.",
+        "suggestion": "Guard against empty input.",
+    }
+
+    with (
+        patch("src.services.review_runner.Session", return_value=mock_session),
+        patch("src.services.review_runner.decrypt_token", return_value="fake-token"),
+        patch("src.services.review_runner.publish_status_change"),
+        patch("src.services.review_runner._fetch_pr_diff", return_value="diff"),
+        patch("src.services.review_runner._emit_review_finding"),
+        patch("src.services.review_runner.run_review", return_value=[finding]),
+        patch("src.services.agent_dispatch.enqueue_agent_run") as mock_enqueue,
+    ):
+        dispatch_review_run(str(dev_uuid))
+
+    added_runs = [
+        call.args[0]
+        for call in mock_session.add.call_args_list
+        if call.args and isinstance(call.args[0], AgentRun)
+    ]
+    assert any(r.run_role == RunRole.reviewer for r in added_runs)
+    assert not any(r.run_role == RunRole.fixer for r in added_runs)
+    mock_enqueue.assert_not_called()
