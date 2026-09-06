@@ -43,7 +43,8 @@ def create_task(
             return None
         return parent_run.task
 
-    title = data.instruction[:80] if len(data.instruction) > 0 else "New Task"
+    raw = (data.instruction or "").strip()
+    title = raw[:80] if raw else "New Task"
 
     task = Task(
         user_id=user_id,

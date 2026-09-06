@@ -112,6 +112,8 @@ async def create_task(
 
         session.commit()
         session.refresh(agent_run)
+        # Ensure AgentRunRead has task/pull_request available for _inject_instruction
+        session.refresh(agent_run, attribute_names=["task"])
 
     except HTTPException:
         session.rollback()
