@@ -58,7 +58,8 @@ export function RepoDetail({ repoId }: { repoId: string }) {
       title={fullName}
       nav={nav}
       activeNav="runs"
-      logoHref="/" onLogoClick={() => void navigate({ to: "/" })}
+      logoHref="/"
+      onLogoClick={() => void navigate({ to: "/" })}
       right={<span>{repo.default_branch}</span>}
     >
       <p className="mb-4 text-xs text-[var(--patch-dim)]">

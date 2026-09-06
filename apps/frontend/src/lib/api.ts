@@ -102,7 +102,15 @@ export type AgentRunListItemRead = {
   pull_request: PullRequestSummaryRead | null;
 };
 
-export type EventType = "status_change" | "plan" | "message" | "tool_call" | "tool_result" | "error" | "summary" | "review_finding";
+export type EventType =
+  | "status_change"
+  | "plan"
+  | "message"
+  | "tool_call"
+  | "tool_result"
+  | "error"
+  | "summary"
+  | "review_finding";
 
 export type AgentRunEventRead = {
   id: string;
@@ -322,6 +330,5 @@ export const patchApi = {
     fetchJson<AgentRunRead>(apiEndpoints.agentRunCancel(id), {
       method: "POST",
     }),
-  getAgentRunReview: (id: string) =>
-    fetchJson<ReviewRunRead>(apiEndpoints.agentRunReview(id)),
+  getAgentRunReview: (id: string) => fetchJson<ReviewRunRead>(apiEndpoints.agentRunReview(id)),
 };

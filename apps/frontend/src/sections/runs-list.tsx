@@ -34,7 +34,8 @@ export function RunsList() {
       title="patch"
       nav={nav}
       activeNav="runs"
-      logoHref="/" onLogoClick={() => void navigate({ to: "/" })}
+      logoHref="/"
+      onLogoClick={() => void navigate({ to: "/" })}
       right={<span>runs: {runsQuery.data?.length ?? 0}</span>}
     >
       <Section title="repos">

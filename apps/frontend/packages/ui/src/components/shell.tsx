@@ -18,16 +18,7 @@ type ShellProps = {
   onLogoClick?: () => void;
 };
 
-export function Shell({
-  title,
-  right,
-  children,
-  className,
-  nav,
-  activeNav,
-  logoHref,
-  onLogoClick,
-}: ShellProps) {
+export function Shell({ title, right, children, className, nav, activeNav, logoHref, onLogoClick }: ShellProps) {
   return (
     <div className={cn("min-h-screen w-full bg-[var(--patch-bg)] font-mono text-[var(--patch-fg)]", className)}>
       <div className="mx-auto flex max-w-6xl">

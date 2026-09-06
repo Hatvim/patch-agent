@@ -16,7 +16,13 @@ import {
   type ReviewRunRead,
   type TerminalWebSocketFrame,
 } from "../lib/api";
-import { useAgentRun, useAgentRunDiff, useAgentRunEvents, useAgentRunPullRequest, useAgentRunReview } from "../lib/queries";
+import {
+  useAgentRun,
+  useAgentRunDiff,
+  useAgentRunEvents,
+  useAgentRunPullRequest,
+  useAgentRunReview,
+} from "../lib/queries";
 import { useAgentRunStream } from "../lib/ws";
 
 type TabId = "stream" | "diff" | "pr" | "review";
@@ -122,7 +128,8 @@ export function RunDetail({ runId }: { runId: string }) {
       title={`run ${runId.slice(0, 8)}`}
       nav={nav}
       activeNav="runs"
-      logoHref="/" onLogoClick={() => void navigate({ to: "/" })}
+      logoHref="/"
+      onLogoClick={() => void navigate({ to: "/" })}
     >
       {agentRunQuery.data?.instruction && (
         <div className="mb-4 border-l-2 border-[var(--patch-accent)] bg-[var(--patch-surface)] px-3 py-2 text-sm">
@@ -246,9 +253,7 @@ function EventBlock({ event }: { event: TimelineEvent }) {
           <span className="truncate text-[var(--patch-fg)]">{summary}</span>
         </button>
         {expanded && (
-          <pre className="mt-1 whitespace-pre-wrap break-words pl-4 text-[var(--patch-dim)]">
-            {formatUnknown(args)}
-          </pre>
+          <pre className="mt-1 whitespace-pre-wrap break-words pl-4 text-[var(--patch-dim)]">{formatUnknown(args)}</pre>
         )}
       </div>
     );
@@ -536,16 +541,21 @@ function ReviewTab({
         >
           {status}
         </span>
-        {isReviewRunning && (
-          <span className="text-[var(--patch-dim)]">~ analysing diff...</span>
-        )}
+        {isReviewRunning && <span className="text-[var(--patch-dim)]">~ analysing diff...</span>}
       </div>
 
       {findings.length === 0 && !isReviewRunning && (
         <p className="text-xs text-[var(--patch-accent)]">~ no issues found. PR looks good.</p>
       )}
 
-      {([["critical", critical], ["high", high], ["medium", medium], ["low", low]] as [string, ReviewFinding[]][])
+      {(
+        [
+          ["critical", critical],
+          ["high", high],
+          ["medium", medium],
+          ["low", low],
+        ] as [string, ReviewFinding[]][]
+      )
         .filter(([, items]) => items.length > 0)
         .map(([severity, items]) => (
           <div key={severity}>
@@ -553,8 +563,11 @@ function ReviewTab({
               {severity} ({items.length})
             </div>
             <div className="space-y-2">
-              {items.map((finding, idx) => (
-                <FindingCard key={`${severity}-${idx}`} finding={finding} />
+              {items.map((finding) => (
+                <FindingCard
+                  key={`${severity}-${finding.file_path}-${finding.issue.slice(0, 48) || finding.suggestion.slice(0, 48)}`}
+                  finding={finding}
+                />
               ))}
             </div>
           </div>
