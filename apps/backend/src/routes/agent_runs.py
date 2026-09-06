@@ -45,6 +45,10 @@ class ReviewRunRead(BaseModel):
 
 TERMINAL_STATUSES = {RunStatus.succeeded, RunStatus.failed, RunStatus.cancelled}
 
+MAX_DIFF_CHARS = 200_000
+MAX_FILE_CHARS = 50_000
+MAX_DIFF_PAGES = 3
+
 logger = logging.getLogger(__name__)
 
 agent_runs_router = APIRouter(prefix="/agent_runs", tags=["Agent Runs"])
@@ -137,34 +141,61 @@ def get_agent_run_diff(
     }
 
     try:
-        response = httpx.get(url, headers=headers, timeout=10.0)
-        if response.status_code == 401:
-            raise HTTPException(status_code=401, detail="Invalid GitHub credential")
-        if response.status_code == 403:
-            raise HTTPException(status_code=403, detail="GitHub API forbidden")
-        if response.status_code == 404:
-            raise HTTPException(status_code=404, detail="GitHub PR not found")
-        response.raise_for_status()
-        files = response.json()
-        if not isinstance(files, list):
-            raise HTTPException(status_code=502, detail="GitHub API error")
         out: list[DiffFileRead] = []
-        for f in files:
-            if not isinstance(f, dict):
-                continue
-            try:
-                out.append(
-                    DiffFileRead(
-                        file_path=str(f["filename"]),
-                        status=str(f["status"]),
-                        additions=int(f["additions"]),
-                        deletions=int(f["deletions"]),
-                        patch=f.get("patch"),
+        total_chars = 0
+        truncated = False
+        for page in range(1, MAX_DIFF_PAGES + 1):
+            response = httpx.get(
+                url,
+                headers=headers,
+                params={"per_page": 100, "page": page},
+                timeout=10.0,
+            )
+            if response.status_code == 401:
+                raise HTTPException(status_code=401, detail="Invalid GitHub credential")
+            if response.status_code == 403:
+                raise HTTPException(status_code=403, detail="GitHub API forbidden")
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="GitHub PR not found")
+            response.raise_for_status()
+            files = response.json()
+            if not isinstance(files, list):
+                raise HTTPException(status_code=502, detail="GitHub API error")
+            if not files:
+                break
+            capped = False
+            for f in files:
+                if not isinstance(f, dict):
+                    continue
+                patch = f.get("patch")
+                if isinstance(patch, str):
+                    if len(patch) > MAX_FILE_CHARS:
+                        truncated = True
+                        continue
+                    if total_chars + len(patch) > MAX_DIFF_CHARS:
+                        truncated = True
+                        capped = True
+                        break
+                    total_chars += len(patch)
+                try:
+                    out.append(
+                        DiffFileRead(
+                            file_path=str(f["filename"]),
+                            status=str(f["status"]),
+                            additions=int(f["additions"]),
+                            deletions=int(f["deletions"]),
+                            patch=f.get("patch"),
+                        )
                     )
-                )
-            except (KeyError, TypeError, ValueError):
-                logger.warning("Skipping malformed GitHub file object: %r", f)
-                continue
+                except (KeyError, TypeError, ValueError):
+                    logger.warning("Skipping malformed GitHub file object: %r", f)
+                    continue
+            if capped:
+                break
+            if len(files) < 100:
+                break
+        if truncated:
+            logger.warning("PR diff truncated truncated=True chars=%s", total_chars)
         return out
     except httpx.HTTPError as e:
         logger.error(f"GitHub API error: {e}")

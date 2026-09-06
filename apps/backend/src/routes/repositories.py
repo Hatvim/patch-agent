@@ -1,9 +1,10 @@
 import logging
+import re
 from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from src.core.auth import current_user
@@ -17,9 +18,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/repositories", tags=["repositories"])
 
 
+_OWNER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,39}$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+
+
 class RepositoryCreate(BaseModel):
     owner: str
     name: str
+
+    @field_validator("owner")
+    @classmethod
+    def _validate_owner(cls, v: str) -> str:
+        if ".." in v or not _OWNER_RE.match(v):
+            raise ValueError("Invalid repository owner")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        if ".." in v or not _REPO_RE.match(v):
+            raise ValueError("Invalid repository name")
+        return v
 
 
 class RepositoryRead(BaseModel):

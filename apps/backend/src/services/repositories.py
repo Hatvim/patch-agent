@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -9,6 +10,16 @@ from src.models.repository import Repository
 
 logger = logging.getLogger(__name__)
 
+_OWNER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,39}$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+
+
+def _validate_owner_name(owner: str, name: str) -> None:
+    if ".." in owner or not _OWNER_RE.match(owner):
+        raise ValueError("Invalid repository owner")
+    if ".." in name or not _REPO_RE.match(name):
+        raise ValueError("Invalid repository name")
+
 
 def connect_repo(
     user_id: UUID,
@@ -17,6 +28,7 @@ def connect_repo(
     pat: str,
     session: Session,
 ) -> Repository:
+    _validate_owner_name(owner, name)
     full_name = f"{owner}/{name}"
 
     existing = session.exec(

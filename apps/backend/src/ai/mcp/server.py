@@ -120,18 +120,19 @@ def _event_payload(event: AgentRunEvent) -> dict[str, Any]:
 
 @mcp.tool()
 def list_recent_agent_runs(
+    caller_user_id: str,
     limit: int = 20,
     repository_id: str | None = None,
-    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """List recent agent runs, optionally filtered by repository_id or user_id."""
+    """List recent agent runs for the caller, optionally filtered by repository_id."""
     limit = max(1, min(limit, 100))
+    caller_uuid = _uuid(caller_user_id, "caller_user_id")
     repository_uuid = _uuid(repository_id, "repository_id") if repository_id else None
-    user_uuid = _uuid(user_id, "user_id") if user_id else None
 
     statement = (
         select(AgentRun)
         .join(Task, AgentRun.task_id == Task.id)
+        .where(Task.user_id == caller_uuid)
         .options(
             selectinload(AgentRun.task).selectinload(Task.repository),
             selectinload(AgentRun.pull_request),
@@ -141,20 +142,20 @@ def list_recent_agent_runs(
     )
     if repository_uuid is not None:
         statement = statement.where(Task.repository_id == repository_uuid)
-    if user_uuid is not None:
-        statement = statement.where(Task.user_id == user_uuid)
 
     with session_scope() as session:
         return [_run_summary(run) for run in session.exec(statement).all()]
 
 
 @mcp.tool()
-def get_agent_run(run_id: str) -> dict[str, Any]:
+def get_agent_run(run_id: str, caller_user_id: str) -> dict[str, Any]:
     """Get one agent run with task, repository, pull request, and tool call metadata."""
     run_uuid = _uuid(run_id, "run_id")
+    caller_uuid = _uuid(caller_user_id, "caller_user_id")
     statement = (
         select(AgentRun)
-        .where(AgentRun.id == run_uuid)
+        .join(Task, AgentRun.task_id == Task.id)
+        .where(AgentRun.id == run_uuid, Task.user_id == caller_uuid)
         .options(
             selectinload(AgentRun.task).selectinload(Task.repository),
             selectinload(AgentRun.pull_request),
@@ -190,42 +191,61 @@ def get_agent_run(run_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_agent_run_events(run_id: str, limit: int = 50) -> list[dict[str, Any]]:
-    """List ordered event frames for an agent run."""
+def list_agent_run_events(
+    run_id: str, caller_user_id: str, limit: int = 50
+) -> list[dict[str, Any]]:
+    """List ordered event frames for an agent run owned by the caller."""
     run_uuid = _uuid(run_id, "run_id")
+    caller_uuid = _uuid(caller_user_id, "caller_user_id")
     limit = max(1, min(limit, 100))
-    statement = (
-        select(AgentRunEvent)
-        .where(AgentRunEvent.agent_run_id == run_uuid)
-        .order_by(AgentRunEvent.sequence.asc())
-        .limit(limit)
-    )
 
     with session_scope() as session:
+        owner_statement = (
+            select(AgentRun)
+            .join(Task, AgentRun.task_id == Task.id)
+            .where(AgentRun.id == run_uuid, Task.user_id == caller_uuid)
+        )
+        if session.exec(owner_statement).first() is None:
+            return []
+        statement = (
+            select(AgentRunEvent)
+            .where(AgentRunEvent.agent_run_id == run_uuid)
+            .order_by(AgentRunEvent.sequence.asc())
+            .limit(limit)
+        )
         return [_event_payload(event) for event in session.exec(statement).all()]
 
 
 @mcp.tool()
-def get_repository_context(repository_id: str, limit: int = 20) -> dict[str, Any]:
+def get_repository_context(
+    repository_id: str, caller_user_id: str, limit: int = 20
+) -> dict[str, Any]:
     """Get repository metadata plus recent tasks and agent runs for code-gen context."""
     repository_uuid = _uuid(repository_id, "repository_id")
+    caller_uuid = _uuid(caller_user_id, "caller_user_id")
     limit = max(1, min(limit, 100))
 
     with session_scope() as session:
         repository = session.get(Repository, repository_uuid)
-        if repository is None:
+        if repository is None or repository.user_id != caller_uuid:
             return {"found": False, "repository_id": repository_id}
 
         tasks_statement = (
             select(Task)
-            .where(Task.repository_id == repository_uuid)
+            .where(
+                Task.repository_id == repository_uuid,
+                Task.user_id == caller_uuid,
+            )
             .order_by(Task.created_at.desc())
             .limit(limit)
         )
         runs_statement = (
             select(AgentRun)
             .join(Task, AgentRun.task_id == Task.id)
-            .where(Task.repository_id == repository_uuid)
+            .where(
+                Task.repository_id == repository_uuid,
+                Task.user_id == caller_uuid,
+            )
             .options(
                 selectinload(AgentRun.task).selectinload(Task.repository),
                 selectinload(AgentRun.pull_request),
@@ -271,15 +291,25 @@ def get_repository_context(repository_id: str, limit: int = 20) -> dict[str, Any
 async def search_code(
     query: str,
     repository_id: str,
+    caller_user_id: str,
     limit: int = 8,
 ) -> list[dict[str, Any]]:
-    """Semantic code search over indexed repository chunks.
+    """Semantic code search over indexed repository chunks owned by the caller.
 
     Embeds the query, searches the vector DB for similar code chunks
     filtered by repository_id, and returns top-k results with file path,
     line range, language, and content preview.
     """
     limit = max(1, min(limit, 20))
+    try:
+        repository_uuid = _uuid(repository_id, "repository_id")
+        caller_uuid = _uuid(caller_user_id, "caller_user_id")
+    except ValueError as exc:
+        return [{"error": str(exc)}]
+    with session_scope() as session:
+        repository = session.get(Repository, repository_uuid)
+        if repository is None or repository.user_id != caller_uuid:
+            return []
     try:
         results = await _search_code(query, repository_id, limit)
         return [r.to_dict() for r in results]

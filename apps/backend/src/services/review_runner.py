@@ -24,6 +24,7 @@ from src.ai.reviewer import run_review
 from src.celery_app import celery_app
 from src.core.config import settings
 from src.core.database import engine
+from src.core.redaction import redact_text
 from src.models.agent_run import AgentRun
 from src.models.agent_run_event import AgentRunEvent
 from src.models.enums import EventType, RunRole, RunStatus
@@ -34,6 +35,10 @@ from src.services.events import publish_run_frame, publish_status_change
 logger = logging.getLogger(__name__)
 
 FIX_SEVERITIES = {"critical", "high"}
+
+MAX_DIFF_CHARS = 200_000
+MAX_FILE_CHARS = 50_000
+MAX_DIFF_PAGES = 3
 
 
 def _now() -> datetime:
@@ -74,15 +79,52 @@ def _fetch_pr_diff(github_token: str, owner: str, repo: str, pr_number: int) -> 
         "Accept": "application/vnd.github.v3+json",
     }
     try:
-        resp = httpx.get(url, headers=headers, timeout=15.0)
-        resp.raise_for_status()
-        files = resp.json()
         parts: list[str] = []
-        for f in files:
-            patch = f.get("patch")
-            if patch:
-                parts.append(f"--- a/{f['filename']}\n+++ b/{f['filename']}\n{patch}")
-        return "\n\n".join(parts)
+        total_chars = 0
+        truncated = False
+        for page in range(1, MAX_DIFF_PAGES + 1):
+            resp = httpx.get(
+                url,
+                headers=headers,
+                params={"per_page": 100, "page": page},
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            files = resp.json()
+            if not files:
+                break
+            capped = False
+            for f in files:
+                patch = f.get("patch")
+                if not patch:
+                    continue
+                entry = f"--- a/{f['filename']}\n+++ b/{f['filename']}\n{patch}"
+                if len(entry) > MAX_FILE_CHARS:
+                    truncated = True
+                    continue
+                if total_chars + len(entry) > MAX_DIFF_CHARS:
+                    truncated = True
+                    capped = True
+                    break
+                parts.append(entry)
+                total_chars += len(entry)
+            if capped:
+                break
+            if len(files) < 100:
+                break
+        result = "\n\n".join(parts)
+        if len(result) > MAX_DIFF_CHARS:
+            result = result[:MAX_DIFF_CHARS]
+            truncated = True
+        if truncated:
+            logger.info(
+                "PR diff truncated for %s/%s#%s truncated=True chars=%s",
+                owner,
+                repo,
+                pr_number,
+                len(result),
+            )
+        return result
     except Exception:
         logger.exception("Failed to fetch PR diff for %s/%s#%s", owner, repo, pr_number)
         return ""
@@ -254,7 +296,7 @@ def dispatch_review_run(self, developer_run_id: str) -> None:
                         _set_run_status(
                             session, reviewer_row, RunStatus.failed,
                             finished_at=_now(),
-                            error_message=f"Review dispatch error: {exc}",
+                            error_message=redact_text(f"Review dispatch error: {exc}")[:2000],
                         )
             except Exception:
                 pass
